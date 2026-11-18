@@ -1,0 +1,3 @@
+file_name,player,rep,global,contact_avant_bras,pas_de_swing,synchro_jambes_bras,pas_de_remontee,pas_de_saut,placement_jambes,ballon_cote,commentaire
+IMG_6343.MOV,Benjamin,1,reussie,1,1,1,1,1,1,droite,exemple : 1 = critère respecté / 0 = raté / vide = non visible
+IMG_6356.MOV,Benjamin,1,ratee,1,0,0,1,1,1,gauche,exemple : swing des bras

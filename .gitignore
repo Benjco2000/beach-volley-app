@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+*.egg-info/
+
+# Données et artefacts (jamais versionnés : vidéos de personnes)
+data/raw/
+data/interim/
+data/processed/
+models/
+reports/
+mlruns/
+secrets/
+*.pt
+*.mov
+*.MOV
+*.mp4

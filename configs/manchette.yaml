@@ -1,0 +1,137 @@
+# Configuration de la pipeline "manchette"
+# Toutes les valeurs ici sont modifiables sans toucher au code.
+
+gesture: manchette
+
+# --- Ingestion Google Drive -------------------------------------------------
+drive:
+  # Dossier "BEACH VOLLEY / VIDEO MANCHETTES" : sous-dossiers = labels
+  training_folder_id: 1vtpKa-tB6AdyaiY1uo3_E2nU5om0MJKJ
+  # Dossier "BEACH VOLLEY / Vidéo G3" : <Joueuse>/<date - geste>/clips
+  test_folder_id: 1CtUOF6vhCF22z0wZ7AEa1v6XQAf_ZM3P
+  # Seuls les sous-dossiers G3 dont le nom contient ce mot sont gardés
+  test_subfolder_filter: manchette
+  # Nom de sous-dossier (normalisé : minuscules, sans accents) -> label
+  label_map:
+    reussie: 1
+    ratee: 0
+  service_account_file: secrets/service_account.json
+
+paths:
+  raw_dir: data/raw            # vidéos téléchargées (Bronze)
+  interim_dir: data/interim    # keypoints .npz par vidéo (Silver)
+  processed_dir: data/processed  # table de features (Gold)
+  models_dir: models
+  reports_dir: reports
+
+# --- Extraction de pose -----------------------------------------------------
+pose:
+  backend: yolo
+  pose_model: yolo11n-pose.pt   # passer à yolo11s/m-pose.pt si GPU dispo
+  ball_model: yolo11n.pt        # COCO classe 32 = "sports ball"
+  detect_ball: true
+  imgsz: 640
+  conf: 0.25
+  ball_conf: 0.15
+  frame_stride: 1               # 2 = traite 1 frame sur 2 (60 fps -> 30 fps)
+  max_side: 1280                # redimensionnement avant inférence
+  keypoint_conf_min: 0.3        # en dessous, le point est interpolé
+  smoothing_window_s: 0.12      # lissage Savitzky-Golay
+
+# --- Découpage en répétitions ----------------------------------------------
+segmentation:
+  min_gap_s: 1.0                # écart minimal entre deux contacts
+  pre_s: 1.0                    # fenêtre analysée avant le contact
+  post_s: 0.6                   # et après
+
+# --- Critères du coach (règles) ---------------------------------------------
+# Les seuils sont des valeurs de départ : `volleyai train` produit un rapport
+# (reports/reference_manchette.json) avec des seuils suggérés à partir des
+# manchettes réussies / ratées. Reporte-les ici quand tu es d'accord.
+criteria:
+  - id: contact_avant_bras
+    label: Contact sur les avant-bras
+    feature: contact_forearm_t
+    op: "<="
+    threshold: 0.65
+    weight: 3
+    requires_ball: true
+    fail_message: Le ballon touche trop près des coudes (ou sur le haut des bras).
+    axis: Prendre le ballon sur le plat des avant-bras, entre poignets et mi-avant-bras, en se plaçant plus tôt derrière le ballon.
+
+  - id: pas_de_swing
+    label: Pas de swing des bras
+    feature: arm_swing_amplitude_deg
+    op: "<="
+    threshold: 35
+    weight: 3
+    fail_message: Les bras montent trop fort au contact (swing).
+    axis: Figer le plan de frappe avant le contact ; ce sont les jambes qui donnent l'impulsion, les bras ne remontent que très légèrement.
+
+  - id: synchro_jambes_bras
+    label: Jambes et bras synchronisés
+    feature: legs_arms_lag_abs_s
+    op: "<="
+    threshold: 0.12
+    weight: 2
+    fail_message: La poussée des jambes et la montée des bras sont décalées.
+    axis: Déclencher la poussée des jambes et le léger relevé des bras en même temps, dans un seul mouvement.
+
+  - id: pas_de_remontee
+    label: Pas de redressement au contact
+    feature: rise_contact
+    op: "<="
+    threshold: 0.18
+    weight: 2
+    fail_message: Le joueur se redresse au moment du contact.
+    axis: Rester bas pendant le contact ; finir le geste en restant fléchi, le buste vers l'avant.
+
+  - id: pas_de_saut
+    label: Pas de saut
+    feature: ankle_lift_contact
+    op: "<="
+    threshold: 0.10
+    weight: 2
+    fail_message: Les deux pieds quittent le sol au contact.
+    axis: Garder les appuis au sol pendant la frappe ; pousser sur les jambes sans sauter.
+
+  - id: placement_jambes
+    label: Appuis décalés (fente)
+    feature: stance_split
+    op: ">="
+    threshold: 0.30
+    weight: 1
+    fail_message: Pieds trop alignés, pas de fente avant/arrière.
+    axis: "Décaler les appuis : ballon à droite = jambe droite derrière, ballon à gauche = jambe gauche derrière."
+
+  - id: bras_tendus
+    label: Bras tendus
+    feature: elbow_angle_contact_deg
+    op: ">="
+    threshold: 155
+    weight: 1
+    fail_message: Les coudes sont pliés au contact.
+    axis: Verrouiller les coudes, bras tendus et joints, pour former un plan de frappe stable.
+
+  - id: flexion_jambes
+    label: Jambes fléchies en préparation
+    feature: knee_angle_min_prep_deg
+    op: "<="
+    threshold: 150
+    weight: 1
+    fail_message: Pas assez de flexion des jambes avant le contact.
+    axis: Descendre plus bas en préparation pour pouvoir pousser avec les jambes.
+
+# --- Verdict ----------------------------------------------------------------
+verdict:
+  # Si un modèle entraîné existe : verdict = proba modèle ; sinon = score règles
+  rule_score_threshold: 0.7
+  # en dessous de cette part (pondérée) de critères mesurables : pas de verdict
+  min_coverage: 0.6
+  model_threshold: 0.5
+
+# --- Feedback LLM (optionnel) ----------------------------------------------
+llm:
+  enabled: false
+  model: claude-sonnet-5-5
+  max_tokens: 600
