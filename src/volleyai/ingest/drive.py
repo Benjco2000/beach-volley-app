@@ -38,6 +38,12 @@ def build_service(service_account_file: str | Path):
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
+    if not Path(service_account_file).exists():
+        raise SystemExit(
+            f"Clé du compte de service introuvable : {service_account_file}\n"
+            "-> Crée-la (README, section « Accès Google Drive ») et enregistre-la à cet emplacement,\n"
+            "   ou utilise un dossier synchronisé : volleyai extract --split train --local-dir <dossier>"
+        )
     creds = service_account.Credentials.from_service_account_file(
         str(service_account_file), scopes=SCOPES
     )
