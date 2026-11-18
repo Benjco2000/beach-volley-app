@@ -62,7 +62,7 @@ def cmd_train(cfg, args):
         r = res["registered"]
         print(f"Enregistré : {r['name']} v{r['version']} (alias challenger"
               + (", promu champion car premier modèle)" if r["promoted"] else
-                 f") -> `volleyai models promote {r['version']}` pour le servir dans l'app"))
+                 f", non promu : {r['reason']}) -> `volleyai models promote {r['version']}` pour le servir"))
     df = pd.read_csv(features)
     ref = build_reference(df[df["label"].isin([0, 1])])
     save_reference(ref, Path(cfg["paths"]["models_dir"]) / REFERENCE_FILE)
@@ -77,6 +77,11 @@ def cmd_train(cfg, args):
 
 def cmd_models(cfg, args):
     from volleyai.model.train import list_versions, promote
+    if args.action == "demote":
+        from volleyai.model.train import demote
+        demote(cfg)
+        print("Alias champion retiré : l'app utilise les règles du coach.")
+        return
     if args.action == "promote":
         promote(cfg, args.version, args.alias)
         print(f"v{args.version} -> alias {args.alias or cfg['mlflow']['serving_alias']}")
@@ -89,6 +94,23 @@ def cmd_models(cfg, args):
             "roc_auc_mean", "data_n_samples", "data_source", "data_data_hash"]
     df = pd.DataFrame(versions)
     print(df[[c for c in cols if c in df]].to_string(index=False))
+
+
+def cmd_inspect(cfg, args):
+    """Contrôle qualité de la table de features : contact trouvé ? squelette fiable ?"""
+    from volleyai.features.manchette import FEATURE_COLUMNS
+    path = Path(cfg["paths"]["processed_dir"]) / f"features_{args.split}.csv"
+    df = pd.read_csv(path)
+    df["mesures_ok"] = df[FEATURE_COLUMNS].notna().sum(axis=1).astype(str) + f"/{len(FEATURE_COLUMNS)}"
+    cols = ["name", "label", "contact_method", "contact_time_s", "n_reps_detected", "pose_quality",
+            "camera_side", "mesures_ok", "elbow_angle_contact_deg", "knee_angle_contact_deg",
+            "contact_forearm_dist", "contact_forearm_t"]
+    pd.set_option("display.width", 250)
+    print(df[[c for c in cols if c in df]].round(2).sort_values(["label", "name"]).to_string(index=False))
+    print("\nContact détecté via :", df["contact_method"].value_counts().to_dict())
+    print("Qualité moyenne du squelette :", round(df["pose_quality"].mean(), 2))
+    if "label" in df:
+        print("Clips par label :", df["label"].value_counts().to_dict())
 
 
 def cmd_synth(cfg, args):
@@ -160,6 +182,9 @@ def main(argv=None):
     msub = p.add_subparsers(dest="action", required=True)
     msub.add_parser("list")
     q = msub.add_parser("promote"); q.add_argument("version", type=int); q.add_argument("--alias")
+    msub.add_parser("demote", help="retire le champion (retour aux règles du coach)")
+    p = sub.add_parser("inspect", help="contrôle qualité des features extraites")
+    p.add_argument("--split", choices=["train", "test"], default="train")
     p = sub.add_parser("synth-dataset", help="table de features synthétique (démo sans vidéos)")
     p.add_argument("--n", type=int, default=120); p.add_argument("--seed", type=int, default=0)
     p.add_argument("--force", action="store_true")
@@ -171,7 +196,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     {"ingest": cmd_ingest, "extract": cmd_extract, "train": cmd_train, "models": cmd_models,
-     "synth-dataset": cmd_synth,
+     "synth-dataset": cmd_synth, "inspect": cmd_inspect,
      "analyze": cmd_analyze, "evaluate-g3": cmd_evaluate_g3}[args.cmd](cfg, args)
 
 

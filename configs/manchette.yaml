@@ -136,6 +136,7 @@ training:
   cv_repeats: 5                 # validation croisée groupée répétée (moyenne ± écart-type)
   selection_metric: balanced_accuracy
   simplicity_margin: 0.02       # à moins de 0.02 du meilleur, on garde le modèle le plus simple
+  min_score_to_serve: 0.65      # en dessous, jamais promu champion automatiquement (l'app garde les règles)
 
 # --- Suivi des expériences et registre de modèles --------------------------
 mlflow:

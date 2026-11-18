@@ -89,6 +89,11 @@ def test_training_registry_end_to_end(tmp_path):
     assert [v["version"] for v in versions] == [1, 2]
     assert "champion" in versions[0]["aliases"] and "challenger" in versions[1]["aliases"]
 
+    weak = {**cfg, "training": {**cfg["training"], "min_score_to_serve": 0.99}}
+    from volleyai.model.train import demote
+    demote(cfg)
+    assert load_model(cfg) is None  # sans champion : règles du coach
+    assert not train_candidates(csv, weak, candidates=["logreg"])["registered"]["promoted"]
     promote(cfg, 2)
     bundle = load_model(cfg)
     assert bundle["meta"]["version"] == 2

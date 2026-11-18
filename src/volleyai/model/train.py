@@ -196,13 +196,27 @@ def _register(mlflow, cfg: dict, best_row: pd.Series, dataset: dict) -> dict:
     for k, v in tags.items():
         client.set_model_version_tag(name, mv.version, k, v)
     client.set_registered_model_alias(name, "challenger", mv.version)
-    promoted = False
+    promoted, reason = False, None
+    metric = cfg.get("training", {}).get("selection_metric", "balanced_accuracy")
+    score = float(best_row.get(f"{metric}_mean", 0) or 0)
+    min_score = float(cfg.get("training", {}).get("min_score_to_serve", 0.65))
     try:
         client.get_model_version_by_alias(name, serving)
-    except Exception:  # pas encore de champion : le premier modèle le devient
-        client.set_registered_model_alias(name, serving, mv.version)
-        promoted = True
-    return {"name": name, "version": mv.version, "promoted": promoted}
+        reason = "un champion existe déjà"
+    except Exception:  # pas encore de champion : le premier modèle le devient… s'il est assez bon
+        if score >= min_score:
+            client.set_registered_model_alias(name, serving, mv.version)
+            promoted = True
+        else:
+            reason = f"{metric}={score:.2f} < {min_score} (min_score_to_serve) : l'app garde les règles du coach"
+    return {"name": name, "version": mv.version, "promoted": promoted, "reason": reason}
+
+
+def demote(cfg: dict, alias: str | None = None) -> None:
+    """Retire l'alias servi : l'app repasse sur les règles du coach."""
+    mlflow = _mlflow(cfg)
+    alias = alias or cfg["mlflow"].get("serving_alias", "champion")
+    mlflow.MlflowClient().delete_registered_model_alias(cfg["mlflow"]["model_name"], alias)
 
 
 def list_versions(cfg: dict) -> list[dict]:
@@ -251,9 +265,9 @@ def load_model(cfg: dict, ref: str | int | None = None) -> dict | None:
                         "label": f"v{mv.version} · {mv.tags.get('candidate', '?')}"
                                  + (f" · {', '.join(mv.aliases)}" if mv.aliases else "")}
             except Exception:
-                pass
+                return None  # pas de champion : règles du coach
     p = Path(cfg["paths"]["models_dir"]) / "manchette_clf.joblib"
-    if p.exists():
+    if p.exists() and (str(ref) == "local" or not _mlflow_available()):
         import joblib
         b = joblib.load(p)
         return {"model": b["model"], "meta": b["meta"], "label": f"local · {b['meta'].get('candidate', '?')}"}
