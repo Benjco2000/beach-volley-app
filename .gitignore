@@ -12,6 +12,7 @@ data/processed/
 models/
 reports/
 mlruns/
+mlflow.db
 secrets/
 *.pt
 *.mov

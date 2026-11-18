@@ -107,3 +107,43 @@ def make_manchette(fps: float = 60, duration: float = 2.4, t_contact: float = 1.
         kps[..., 0] = W - kps[..., 0]
         ball[:, 0] = W - ball[:, 0]
     return PoseResult(kps, ball, np.arange(T), fps, W, H, "synthetic"), ic
+
+
+FAULTS = {
+    "swing": lambda r: dict(swing=r.uniform(40, 80)),
+    "saut": lambda r: dict(jump=r.uniform(0.3, 0.7)),
+    "redressement": lambda r: dict(rise=True),
+    "contact_coude": lambda r: dict(forearm_t=r.uniform(0.8, 1.05)),
+    "pieds_alignes": lambda r: dict(split=r.uniform(0, 30)),
+    "coudes_plies": lambda r: dict(bent_elbows=r.uniform(60, 120)),
+    "bras_en_avance": lambda r: dict(arms_early=r.uniform(0.15, 0.3), swing=r.uniform(20, 40)),
+}
+
+
+def make_dataset(n: int = 80, p_good: float = 0.6, label_noise: float = 0.08, seed: int = 0):
+    """Table de features synthétique (une ligne = une manchette), au même format
+    que `volleyai extract`. Sert à tester l'entraînement sans vidéos."""
+    import pandas as pd
+
+    from volleyai.features.manchette import analyze_pose
+
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n):
+        good = rng.random() < p_good
+        kw = dict(swing=rng.uniform(0, 15), forearm_t=rng.uniform(0.1, 0.5), split=rng.uniform(80, 180),
+                  arms_early=rng.uniform(-0.03, 0.05), facing=int(rng.choice([-1, 1])),
+                  with_ball=bool(rng.random() < 0.8), noise=rng.uniform(1, 4),
+                  t_contact=rng.uniform(1.2, 1.6), seed=i)
+        faults = []
+        if not good:
+            faults = list(rng.choice(list(FAULTS), size=int(rng.integers(1, 3)), replace=False))
+            for f in faults:
+                kw.update(FAULTS[f](rng))
+        pose, _ = make_manchette(**kw)
+        _, reps = analyze_pose(pose, {})
+        label = int(good) if rng.random() >= label_noise else int(not good)
+        rows.append({**reps[0], "label": label, "name": f"SYN_{i // 2:03d}.mov", "file_id": f"syn{i:03d}",
+                     "folder_path": "reussie" if label else "ratee", "faults": "|".join(faults),
+                     "source_kind": "synthetic"})
+    return pd.DataFrame(rows)

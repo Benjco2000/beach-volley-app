@@ -21,21 +21,42 @@ STATUS = {"ok": "✅", "ko": "❌", "na": "➖"}
 
 
 @st.cache_resource
-def get_analyzer() -> Analyzer:
-    return Analyzer(load_config())
+def get_analyzer(model_ref: str) -> Analyzer:
+    return Analyzer(load_config(), model_ref=model_ref)
+
+
+@st.cache_data(ttl=30)
+def model_options() -> dict[str, str]:
+    """{libellé: référence} : versions du registre MLflow + règles seules."""
+    from volleyai.model.train import list_versions
+    opts = {}
+    versions = list_versions(load_config())
+    for v in sorted(versions, key=lambda v: ("champion" not in v["aliases"], -v["version"])):
+        ba = v.get("balanced_accuracy_mean")
+        tag = f" [{', '.join(v['aliases'])}]" if v["aliases"] else ""
+        src = " (synthétique)" if v.get("data_source") == "synthetic" else ""
+        opts[f"v{v['version']} · {v.get('candidate', '?')}{tag} · BA {ba}{src}"] = str(v["version"])
+    opts["Règles du coach uniquement"] = "none"
+    return opts
 
 
 st.title("🏐 Analyse de manchette")
 st.caption("Vidéo de profil, un joueur bien visible, ballon dans le champ si possible.")
 
 with st.sidebar:
-    an = get_analyzer()
-    st.subheader("Modèle")
+    st.subheader("Modèle utilisé")
+    opts = model_options()
+    choice = st.selectbox("Version", list(opts), index=0,
+                          help="Registre MLflow. Le champion est proposé par défaut.")
+    an = get_analyzer(opts[choice])
     if an.model:
-        cv = an.model["meta"]["cv"]
-        st.success(f"Modèle entraîné (précision équilibrée CV : {cv.get('balanced_accuracy', 'n/a')})")
+        m = an.model["meta"]
+        st.caption(f"Précision équilibrée (CV) : {m.get('balanced_accuracy_mean', 'n/a')} "
+                   f"± {m.get('balanced_accuracy_std', 'n/a')} — {m.get('data_n_samples', '?')} manchettes")
+        if m.get("data_source") == "synthetic":
+            st.warning("Modèle entraîné sur des données synthétiques : démonstration uniquement.")
     else:
-        st.info("Pas encore de modèle : verdict basé sur les critères du coach.")
+        st.info("Verdict basé sur les critères du coach (seuils de configs/manchette.yaml).")
     use_llm = st.toggle("Reformuler avec Claude (ANTHROPIC_API_KEY)", value=False)
 
 up = st.file_uploader("Vidéo (.mov, .mp4)", type=["mov", "mp4", "m4v", "avi"])

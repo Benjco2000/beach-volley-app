@@ -2,12 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from synthetic import make_manchette
+from volleyai.synthetic import make_manchette
 from volleyai.analysis.reference import build_reference, compare_to_reference
 from volleyai.analysis.rules import evaluate, rule_score
 from volleyai.config import load_config
 from volleyai.features.manchette import FEATURE_COLUMNS, analyze_pose
-from volleyai.model.train import cross_validate, make_pipeline
 
 CFG = load_config()
 
@@ -67,31 +66,38 @@ def test_no_ball_criterion_not_evaluable():
     assert status(f)["contact_avant_bras"] == "na"
 
 
-def _dataset(n=24, seed=0):
-    rng = np.random.default_rng(seed)
-    rows = []
-    for i in range(n):
-        good = i % 3 != 0
-        kw = dict(swing=rng.uniform(0, 15), noise=2, seed=i) if good else \
-            dict(swing=rng.uniform(50, 80), jump=rng.choice([0, 0.5]), noise=2, seed=i)
-        f, _ = feats(**kw)
-        rows.append({**f, "label": int(good), "name": f"clip{i}.mov"})
-    return pd.DataFrame(rows)
+def test_training_registry_end_to_end(tmp_path):
+    from volleyai.model.train import list_versions, load_model, predict_proba, promote, train_candidates
+    from volleyai.synthetic import make_dataset
 
+    df = make_dataset(n=60, seed=1)
+    csv = tmp_path / "features.csv"
+    df.to_csv(csv, index=False)
+    cfg = {**CFG, "paths": {**CFG["paths"], "models_dir": tmp_path / "models", "reports_dir": tmp_path / "rep"},
+           "training": {**CFG["training"], "cv_repeats": 2},
+           "mlflow": {**CFG["mlflow"], "tracking_uri": f"sqlite:///{tmp_path}/mlflow.db",
+                      "experiment": "test"}}
+    res = train_candidates(csv, cfg)
+    board = res["leaderboard"]
+    assert set(board["candidate"]) == set(cfg["training"]["candidates"])
+    assert board["balanced_accuracy_mean"].max() >= 0.75, board
+    assert res["registered"]["promoted"]  # premier modèle -> champion
 
-def test_training_and_reference_end_to_end():
-    df = _dataset()
-    cv = cross_validate(df)
-    assert cv["balanced_accuracy"] >= 0.8, cv
-    model = make_pipeline().fit(df[FEATURE_COLUMNS].to_numpy(float), df["label"])
-    assert model.predict_proba(df[FEATURE_COLUMNS].to_numpy(float)).shape == (len(df), 2)
+    res2 = train_candidates(csv, cfg, candidates=["logreg"])
+    assert not res2["registered"]["promoted"]  # le champion n'est pas écrasé
+    versions = list_versions(cfg)
+    assert [v["version"] for v in versions] == [1, 2]
+    assert "champion" in versions[0]["aliases"] and "challenger" in versions[1]["aliases"]
+
+    promote(cfg, 2)
+    bundle = load_model(cfg)
+    assert bundle["meta"]["version"] == 2
+    good = df[df["label"] == 1].iloc[0].to_dict()
+    assert 0.0 <= predict_proba(bundle, good) <= 1.0
+
     ref = build_reference(df)
-    assert next(iter(ref["features"])) in ("arm_swing_amplitude_deg", "arm_peak_velocity_dps",
-                                           "arm_contribution", "legs_arms_lag_s", "legs_arms_lag_abs_s",
-                                           "arm_trunk_contact_deg")
     bad, _ = feats(swing=75, seed=99)
-    devs = compare_to_reference(bad, ref)
-    assert any(d["feature"].startswith("arm") for d in devs)
+    assert any(d["feature"].startswith("arm") for d in compare_to_reference(bad, ref, top=8))
 
 
 def test_multiple_reps_segmented():

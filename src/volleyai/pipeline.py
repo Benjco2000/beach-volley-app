@@ -31,10 +31,10 @@ def _clean(v):
 
 
 class Analyzer:
-    def __init__(self, cfg: dict, extractor: PoseExtractor | None = None):
+    def __init__(self, cfg: dict, extractor: PoseExtractor | None = None, model_ref: str | int | None = None):
         self.cfg = cfg
         self._extractor = extractor
-        self.model = load_model(cfg["paths"]["models_dir"])
+        self.model = load_model(cfg, model_ref)  # alias MLflow, n° de version ou 'local'
         self.reference = load_reference(Path(cfg["paths"]["models_dir"]) / REFERENCE_FILE)
 
     @property
@@ -93,6 +93,7 @@ class Analyzer:
             "rule_score": None if score is None else round(score, 3),
             "coverage": round(coverage, 3),
             "model_proba": None if proba is None else round(proba, 3),
+            "model": self.model["label"] if self.model else None,
             "criteria": [c.to_dict() for c in criteria],
             "axes": improvement_axes(criteria),
             "deviations": compare_to_reference(feats, self.reference) if self.reference else [],

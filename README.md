@@ -51,7 +51,7 @@ Chaque vidéo peut contenir **plusieurs manchettes** : elles sont détectées et
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[app,drive,dev]"     # + ".[llm]" pour Claude, ".[mlflow]" pour MLflow
+pip install -e ".[app,drive,mlflow,dev]"   # + ".[llm]" pour Claude
 pytest                                # tests sur des manchettes synthétiques
 ```
 Les poids YOLO (~6 Mo) se téléchargent automatiquement au premier lancement.
@@ -68,12 +68,36 @@ Sans API : synchronise le dossier avec Google Drive pour ordinateur et utilise `
 ```bash
 volleyai ingest --split train         # VIDEO MANCHETTES/{réussie,ratée} -> data/raw/train
 volleyai extract --split train        # pose + features -> data/processed/features_train.csv
-volleyai train                        # modèle + reports/reference_manchette.json
+volleyai train                        # modèles comparés + registre MLflow + reports/reference_manchette.json
 volleyai ingest --split test          # Vidéo G3/<joueuse>/*Manchettes*
 volleyai evaluate-g3                  # -> reports/g3_manchettes.csv (verdict par manchette et joueuse)
 volleyai analyze ma_video.MOV --overlay annotee.mp4
 streamlit run app/streamlit_app.py    # l'app d'upload
 ```
+
+## Entraînement : plusieurs modèles, un registre, un modèle servi
+
+```bash
+volleyai train                          # entraîne tous les candidats de configs/manchette.yaml
+volleyai train --candidates logreg,hist_gb
+volleyai models list                    # versions enregistrées, alias, scores, jeu de données
+volleyai models promote 3               # la version 3 devient le "champion" servi par l'app
+volleyai analyze clip.MOV --model 2     # tester une version précise (ou challenger, local, none)
+mlflow ui --backend-store-uri sqlite:///mlflow.db   # interface MLflow : runs, métriques, artefacts
+```
+
+| Étape | Ce qui se passe |
+|---|---|
+| **Candidats** (`src/volleyai/model/zoo.py`) | régression logistique, SVM RBF, forêt aléatoire, gradient boosting. Ajouter un modèle = une entrée dans ce fichier |
+| **Protocole commun** | validation croisée groupée (les clips d'une même vidéo source restent ensemble) et répétée 5 fois → moyenne ± écart-type de précision équilibrée, AUC, F1 sur les ratées |
+| **Suivi** | 1 run MLflow parent par entraînement, 1 run enfant par candidat : paramètres, métriques, importance des mesures, modèle, empreinte du jeu de données |
+| **Sélection** | meilleure précision équilibrée ; à moins de 0,02 près, le modèle le plus simple gagne |
+| **Registre** | le gagnant est enregistré (`volleyai-manchette`, version N) avec l'alias `challenger`. Il ne devient `champion` qu'au premier entraînement ou sur `promote` : un nouvel entraînement ne remplace jamais le modèle servi sans ton accord |
+| **Service** | l'app charge le `champion` par défaut et permet de choisir une autre version ou « règles du coach uniquement » |
+
+Pour tester la mécanique sans vidéos : `volleyai synth-dataset` génère des manchettes synthétiques (les modèles produits sont étiquetés « synthétique » partout).
+
+Sur Databricks, il suffit de changer la section `mlflow` de la config : `tracking_uri: databricks`, `registry_uri: databricks-uc`, `model_name: <catalog>.<schema>.volleyai_manchette`.
 
 ## Ce qu'il faut ajouter pour que ça devienne fiable
 
@@ -87,6 +111,7 @@ streamlit run app/streamlit_app.py    # l'app d'upload
 
 ## Feuille de route
 - [x] v0 : pipeline complète, règles du coach, profil de référence, modèle simple, app, batch G3
+- [x] v0.2 : plusieurs modèles comparés, suivi MLflow, registre (champion / challenger), choix du modèle dans l'app
 - [ ] Recaler les seuils sur tes vraies vidéos (`reports/reference_manchette.json`)
 - [ ] Annotation par critère + évaluation sur G3
 - [ ] Détecteur de ballon spécifique beach
@@ -102,7 +127,9 @@ src/volleyai/pose.py            YOLO11-pose + ballon, suivi du joueur principal
 src/volleyai/keypoints.py       interpolation, lissage, orientation profil
 src/volleyai/features/          features biomécaniques + détection des contacts
 src/volleyai/analysis/          règles, profil de référence, feedback (texte / Claude)
-src/volleyai/model/train.py     classifieur, validation croisée groupée, MLflow
+src/volleyai/model/zoo.py       catalogue des modèles candidats
+src/volleyai/model/train.py     comparaison, validation croisée groupée répétée, MLflow, registre
+src/volleyai/synthetic.py       générateur de manchettes synthétiques (tests, démo)
 src/volleyai/pipeline.py        orchestration + cache
 src/volleyai/overlay.py         vidéo annotée (H.264)
 app/streamlit_app.py            application d'upload

@@ -22,6 +22,12 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
     sa = cfg.get("drive", {}).get("service_account_file")
     if sa and not Path(sa).is_absolute():
         cfg["drive"]["service_account_file"] = ROOT / sa
+    # sqlite relatif -> à la racine du repo (quel que soit le dossier courant)
+    m = cfg.get("mlflow", {})
+    for key in ("tracking_uri", "registry_uri"):
+        uri = m.get(key)
+        if uri and uri.startswith("sqlite:///") and not uri.startswith("sqlite:////"):
+            m[key] = f"sqlite:///{ROOT / uri[len('sqlite:///'):]}"
     return cfg
 
 

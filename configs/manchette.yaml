@@ -130,6 +130,21 @@ verdict:
   min_coverage: 0.6
   model_threshold: 0.5
 
+# --- Entraînement : plusieurs modèles comparés avec le même protocole -------
+training:
+  candidates: [logreg, svm_rbf, random_forest, hist_gb]   # cf. src/volleyai/model/zoo.py
+  cv_repeats: 5                 # validation croisée groupée répétée (moyenne ± écart-type)
+  selection_metric: balanced_accuracy
+  simplicity_margin: 0.02       # à moins de 0.02 du meilleur, on garde le modèle le plus simple
+
+# --- Suivi des expériences et registre de modèles --------------------------
+mlflow:
+  tracking_uri: sqlite:///mlflow.db     # Databricks : databricks
+  registry_uri: null                    # Databricks Unity Catalog : databricks-uc
+  experiment: volleyai-manchette        # Databricks : /Users/<toi>/volleyai-manchette
+  model_name: volleyai-manchette        # Unity Catalog : <catalog>.<schema>.volleyai_manchette
+  serving_alias: champion               # modèle chargé par l'app ; le dernier entraîné = challenger
+
 # --- Feedback LLM (optionnel) ----------------------------------------------
 llm:
   enabled: false
